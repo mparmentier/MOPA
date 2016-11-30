@@ -1,20 +1,18 @@
 # -*- coding: utf-8 -*-
 
 import pandas as pd
-import nltk
 import re
-from nltk.stem.snowball import SnowballStemmer
 from pymongo import MongoClient
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import matplotlib.pyplot as plt
-from sklearn.manifold import MDS
+from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.cluster import MiniBatchKMeans
 import sys
+from sklearn.feature_extraction.text import HashingVectorizer
+from sklearn.pipeline import make_pipeline
 
 
 
 NB_CLUSTERS = 30
+MONGO_LIMIT = 500
 
 
 
@@ -40,7 +38,7 @@ projection = {
 }
 # requetage de mongo
 try:
-    result = db.Marches.find(query, projection).limit(500)
+    result = db.Marches.find(query, projection).limit(MONGO_LIMIT)
 except Exception as e:
     raise Exception("There is an error when querying mongo : " + e.message)
 
@@ -48,8 +46,8 @@ except Exception as e:
 # c'est tres pratique, on écrit en une ligne une boucle FOR pour créer une liste:
 # https://docs.python.org/2/tutorial/datastructures.html#list-comprehensions
 # Cette ligne va retourner une liste de dictionnaires
-texts = [{'id':r['ANNONCE']['GESTION']['REFERENCE']['IDWEB'], 'text':r['ANNONCE.DONNEES']['OBJET']['OBJET_COMPLET']} for r in result]
-print(texts)
+texts = [{'id':r['ANNONCE']['GESTION']['REFERENCE']['IDWEB'], 'text':r['ANNONCE']['DONNEES']['OBJET']['OBJET_COMPLET']} for r in result]
+print(len(texts))
 
 # conversion de texts en DataFrame. Cette ligne va convertir 'texts' en un tableau (dataframe) avec 2 colones : id et text
 texts_df = pd.DataFrame(texts)
@@ -60,7 +58,7 @@ stop_words = [] #todo: remplir cette liste
 # un document et chaque colonne à un mot
 # doc : http://scikit-learn.org/stable/modules/generated/sklearn.feature_extraction.text.HashingVectorizer.html
 hasher = HashingVectorizer(strip_accents='unicode',
-                               stop_words='french',
+                               stop_words=stop_words,
                                norm=None)
 
 # Un pipeline est juste une liste dans laquelle on place différents processeurs.
@@ -69,7 +67,7 @@ hasher = HashingVectorizer(strip_accents='unicode',
 vectorizer = make_pipeline(hasher, TfidfTransformer())
 
 # on injecte la data dans le pipeline, il en ressort une matrice tfidf
-X = vectorizer.fit_transform(data)
+X = vectorizer.fit_transform(texts_df['text'])
 
 # on prépare l'algorithme de clustering
 km = MiniBatchKMeans(n_clusters=NB_CLUSTERS, init='k-means++', max_iter=1000, n_init=1,
@@ -77,4 +75,6 @@ km = MiniBatchKMeans(n_clusters=NB_CLUSTERS, init='k-means++', max_iter=1000, n_
 
 # on lance l'algo sur la data
 km.fit(X)
+
+print(km.labels_)
 
