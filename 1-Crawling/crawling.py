@@ -61,15 +61,16 @@ def dezip(filezip, pathdst = ''):
             
     zfile.close()
 
-def download(j):
-    print ("Fichier =>",files[j])
-    
-    fichier = {"name": files[j]}
-    enregistrements.insert_one(fichier)
+def download(f):
+    print ("Fichier =>",f)
 
-    fhandle = open(files[j], 'wb')
-    ftp.retrbinary('RETR ' + files[j], fhandle.write)
+    fhandle = open(f, 'wb')
+    ftp.retrbinary('RETR ' + f, fhandle.write)
     fhandle.close()
+
+    # Il est préférable de faire cette opération après le téléchargement, en cas de plantage
+    fichier = {"name": f}
+    enregistrements.insert_one(fichier)
     
 def supprimer(j):
     os.remove(j)
@@ -103,10 +104,10 @@ files = ftp.nlst()
     
 enregistrements = db.enregistrements
 
-for j in range(len(files)):
-    if enregistrements.find_one({ "name": files[j] }) is None :
-        download(j)
-        for element in os.listdir():  
+for f in files:
+    if enregistrements.find_one({ "name": f }) is None :
+        download(f)
+        for element in os.listdir():
             if element.endswith('.DS_Store') or element.endswith('.xml') or element.endswith('.idea') or element.endswith('.py') or element.endswith('.tar'): 
                 continue
                 print("'%s' n'est pas un fichier texte. Je ne travaille pas dessus." % element)
@@ -115,5 +116,5 @@ for j in range(len(files)):
                 saving()
                 supprimer(element)
     else:
-        print(files[j])
+        print(f)
         print("Déjà enregistré")

@@ -1,3 +1,11 @@
+# MOPA data
+*.taz
+*.tar
+
+# other
+*~
+.idea*
+
 # Cache and logs (Symfony2)
 /app/cache/*
 /app/logs/*
