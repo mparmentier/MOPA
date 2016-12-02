@@ -98,9 +98,6 @@ stemmer = SnowballStemmer("french",  ignore_stopwords = True)
 def new_tokenizer(text):
     words = original_tokenizer(text)
     stemmed_words = [stemmer.stem(w) for w in words]
-    #for a in stemmed_words:
-    #    if a.endswith('econduit'):
-    #        print('\n\n\n     '+a+'        --', text)
     return stemmed_words
 
 hasher = HashingVectorizer(tokenizer= new_tokenizer, # création d'un nouveau hasher avec injection de notre tokenizer amélioré
