@@ -5,6 +5,7 @@
 # other
 *~
 .idea*
+3-Clusterisation/data/*
 
 # Cache and logs (Symfony2)
 /app/cache/*

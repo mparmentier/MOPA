@@ -3,15 +3,20 @@
 import pandas as pd
 import re
 from pymongo import MongoClient
-from sklearn.feature_extraction.text import TfidfTransformer
+from sklearn.feature_extraction.text import TfidfTransformer, TfidfVectorizer
 from sklearn.cluster import MiniBatchKMeans
 import sys
 from sklearn.feature_extraction.text import HashingVectorizer
 from sklearn.pipeline import make_pipeline
+from stop_words import get_stop_words
+from nltk.stem.snowball import SnowballStemmer
+import os
+import datetime as dt
+import re
 
 
-
-NB_CLUSTERS = 30
+CODE_DESCRIPTEUR = 88 # pour le choix de la categorie des documents ('ANNONCE.GESTION.INDEXATION.DESCRIPTEURS.DESCRIPTEUR.CODE')
+NB_CLUSTERS = 5
 MONGO_LIMIT = 2000
 
 ##############################
@@ -30,12 +35,20 @@ except :
 
 texts = []
 
-# query pour mongo (celle que tu as écrite)
-query = {'ANNONCE.GESTION.REFERENCE.IDWEB': {'$exists': 'true'}}
+# query pour mongo
+# Note : certes, 'ANNONCE.GESTION.INDEXATION.DESCRIPTEURS.DESCRIPTEUR' est parfois un objet 'dictionnaire', et parfois une liste de dictionnaires
+# cependant, en envoyant 'ANNONCE.GESTION.INDEXATION.DESCRIPTEURS.DESCRIPTEUR.CODE' à Mongo, ce dernier arrive automatiquement à gérer les 2 cas!
+# du coup, mongo renvoie tous les documents dont (le code_descripteur unique) OU (l'un des codes descipteurs) est égal à CODE_DESCRIPTEUR
+# c'est magique!
+query = {
+    'ANNONCE.GESTION.REFERENCE.IDWEB': {'$exists': 'true'},
+    'ANNONCE.GESTION.INDEXATION.DESCRIPTEURS.DESCRIPTEUR.CODE': str(CODE_DESCRIPTEUR),
+}
 # selectionne les champs a rappatrier de mongo, pour eviter les transfers inutiles
 projection = {
     'ANNONCE.DONNEES.OBJET.OBJET_COMPLET':1,
     'ANNONCE.GESTION.REFERENCE.IDWEB':1,
+    #'ANNONCE.GESTION.INDEXATION.DESCRIPTEURS.DESCRIPTEUR.CODE': 1,
 }
 # requetage de mongo
 try:
@@ -43,10 +56,7 @@ try:
 except Exception as e:
     raise Exception("There is an error when querying mongo : " + e.message)
 
-# Cette ligne va retourner une liste de dictionnaires
-#texts = [{'id':r['ANNONCE']['GESTION']['REFERENCE']['IDWEB'], 'text':r['ANNONCE']['DONNEES']['OBJET']['OBJET_COMPLET']} for r in result]
-#print(len(texts))
-
+# Cette partie va retourner une liste de dictionnaires
 texts = []
 for r in result:
     if 'OBJET_COMPLET' in r['ANNONCE']['DONNEES']['OBJET']:
@@ -60,7 +70,7 @@ for r in result:
     obj = {'id':i,'text':t}
     texts += [obj]
 
-
+print("Import Mongo : {} texts".format(len(texts)))
 
 ##############################
 ## Clustering
@@ -69,7 +79,7 @@ for r in result:
 # conversion de texts en DataFrame. Cette ligne va convertir 'texts' en un tableau (dataframe) avec 2 colones : id et text
 texts_df = pd.DataFrame(texts)
 
-stop_words = [] #todo: remplir cette liste
+stop_words = get_stop_words('fr')
 
 # Un HashingVectorizer découpe un texte en une liste de mots, et renvoie une matrice où chaque ligne correspond à
 # un document et chaque colonne à un mot
@@ -77,6 +87,23 @@ stop_words = [] #todo: remplir cette liste
 hasher = HashingVectorizer(strip_accents='unicode',
                                stop_words=stop_words,
                                norm=None)
+
+# Le HashingVectorizer ne permet pas la stemmisation des mots durant le processus de tokenisation.
+# On va donc lui dire de le faire quand même.
+# Pour cela, on récupère sa fonction de tokenisation, que l'on va améliorer, puis lui réinjecter:
+
+original_tokenizer = hasher.build_tokenizer() # recuperation de la fonction de tokenisation
+stemmer = SnowballStemmer("french",  ignore_stopwords = True)
+
+def new_tokenizer(text):
+    words = original_tokenizer(text)
+    stemmed_words = [stemmer.stem(w) for w in words]
+    return stemmed_words
+
+hasher = HashingVectorizer(tokenizer= new_tokenizer, # création d'un nouveau hasher avec injection de notre tokenizer amélioré
+                           strip_accents='unicode',
+                           stop_words=stop_words,
+                           norm=None)
 
 # Un pipeline est juste une liste dans laquelle on place différents processeurs.
 # quand on injectera de la data dans le pipeline, la data passera par tous les processeurs, dans l'ordre
@@ -94,7 +121,10 @@ km = MiniBatchKMeans(n_clusters=NB_CLUSTERS, init='k-means++', max_iter=1000, n_
 km.fit(X)
 
 # recuperation des labels
-cluster_ids = km.labels_
+cluster_ids = ["cl_" + str(i) for i in km.labels_]
+
+# ajout de la colonne cluster_id à texts_df
+texts_df['cluster_id'] = cluster_ids
 
 
 
@@ -111,21 +141,45 @@ def pickTopN(values, features, N):
 def pickTopNIndexes(arr, N):  # optimisable
     return arr.argsort()[-N:][::-1]
 
-
-# on crée une copie de texts_df
-labelled_texts = pd.DataFrame(texts_df)
-# on ajoute une colonne contenant l'identifiant du cluster
-labelled_texts['cluster_id'] = ["cl_" + str(i) for i in cluster_ids]
-
-from sklearn.feature_extraction.text import TfidfVectorizer
-vectorizer = TfidfVectorizer(stop_words=stop_words)
+# On relance une tfidf, cette fois ci dans le but de caractériser les clusters.
+vectorizer = TfidfVectorizer(stop_words=stop_words, tokenizer= new_tokenizer, strip_accents='unicode')
 X = vectorizer.fit_transform(texts_df['text'])
+# on converti X en DataFrame
 X = pd.DataFrame(X.toarray())
 
+# On efectue la somme de chaque poids tfidf de chaque mot, pour l'ensemble des textes du cluster
 X = X.groupby(cluster_ids).apply(sum)
+
 features = vectorizer.get_feature_names()
 
-o = X.apply(lambda arr: pickTopN(arr, features, 15), 1)
+# Pour chaque cluster, on prend les 20 mots dont le poids tfidf aggrégé est le plus fort
+carac = X.apply(lambda arr: pickTopN(arr, features, 20), 1)
 
-print(o)
+# creation du fichier CSV final
+result = pd.DataFrame([[c] for c in carac],columns = ['key_words'])
+result['cluster_id'] = carac.index
+result['human_attributed_label'] = None # Ajout d'une colonne vide
+
+
+
+##############################
+## Enregistrement des fichiers
+##############################
+
+now = re.sub(' ','-',str(dt.datetime.now())[:19])
+dir_name = os.path.join('data','{}-DESCRIPTEUR_{}'.format(now,CODE_DESCRIPTEUR))
+
+os.makedirs(dir_name, exist_ok=True)
+
+result.to_csv(os.path.join(dir_name,'a_completer.csv'),index=False)
+
+for cluster_id in X.index:
+    texts_of_this_cluster = texts_df[texts_df.cluster_id == cluster_id]
+    cluster_path = os.path.join( dir_name, cluster_id)
+    os.makedirs(cluster_path)
+    for text in texts_of_this_cluster.values:
+        with open(os.path.join(cluster_path,text[0]),'w') as fi:
+            fi.write(text[1])
+
+print(result)
 
