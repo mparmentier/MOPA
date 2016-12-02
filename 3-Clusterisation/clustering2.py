@@ -12,12 +12,10 @@ from stop_words import get_stop_words
 from nltk.stem.snowball import SnowballStemmer
 import os
 import datetime as dt
-import re
-
 
 CODE_DESCRIPTEUR = 88 # pour le choix de la categorie des documents ('ANNONCE.GESTION.INDEXATION.DESCRIPTEURS.DESCRIPTEUR.CODE')
 NB_CLUSTERS = 5
-MONGO_LIMIT = 2000
+MONGO_LIMIT = 20000
 
 ##############################
 ## Database
@@ -80,6 +78,7 @@ print("Import Mongo : {} texts".format(len(texts)))
 texts_df = pd.DataFrame(texts)
 
 stop_words = get_stop_words('fr')
+stop_words.extend(['2017', '2016', '2015', '2014', '2013', '2012', '4em', '5em'])
 
 # Un HashingVectorizer découpe un texte en une liste de mots, et renvoie une matrice où chaque ligne correspond à
 # un document et chaque colonne à un mot
@@ -126,8 +125,6 @@ cluster_ids = ["cl_" + str(i) for i in km.labels_]
 # ajout de la colonne cluster_id à texts_df
 texts_df['cluster_id'] = cluster_ids
 
-
-
 ##############################
 ## Aide a la caracterisation des clusters
 ##############################
@@ -160,18 +157,17 @@ result = pd.DataFrame([[c] for c in carac],columns = ['key_words'])
 result['cluster_id'] = carac.index
 result['human_attributed_label'] = None # Ajout d'une colonne vide
 
-
-
 ##############################
 ## Enregistrement des fichiers
 ##############################
 
 now = re.sub(' ','-',str(dt.datetime.now())[:19])
+now = re.sub(':','_',str(dt.datetime.now())[:19])
 dir_name = os.path.join('data','{}-DESCRIPTEUR_{}'.format(now,CODE_DESCRIPTEUR))
 
 os.makedirs(dir_name, exist_ok=True)
 
-result.to_csv(os.path.join(dir_name,'a_completer.csv'),index=False)
+result.to_csv(os.path.join(dir_name,'a_completer.csv'),index=False, sep=";")
 
 for cluster_id in X.index:
     texts_of_this_cluster = texts_df[texts_df.cluster_id == cluster_id]
