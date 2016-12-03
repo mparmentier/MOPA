@@ -15,7 +15,7 @@ import datetime as dt
 import re
 
 
-CODE_DESCRIPTEUR = 88 # pour le choix de la categorie des documents ('ANNONCE.GESTION.INDEXATION.DESCRIPTEURS.DESCRIPTEUR.CODE')
+CODE_DESCRIPTEUR = 274 # pour le choix de la categorie des documents ('ANNONCE.GESTION.INDEXATION.DESCRIPTEURS.DESCRIPTEUR.CODE')
 NB_CLUSTERS = 5
 MONGO_LIMIT = 2000
 
@@ -166,12 +166,16 @@ result['human_attributed_label'] = None # Ajout d'une colonne vide
 ## Enregistrement des fichiers
 ##############################
 
-now = re.sub(' ','-',str(dt.datetime.now())[:19])
+now = re.sub("[ :]",'-',str(dt.datetime.now())[:19])
 dir_name = os.path.join('data','{}-DESCRIPTEUR_{}'.format(now,CODE_DESCRIPTEUR))
 
 os.makedirs(dir_name, exist_ok=True)
 
 result.to_csv(os.path.join(dir_name,'a_completer.csv'),index=False)
+
+# copie de texts_df avec selection de 2 colonnes seulement
+corresp = pd.DataFrame(texts_df,columns=['cluster_id','id'])
+corresp.to_csv(os.path.join(dir_name,'corresp.csv'),index=False)
 
 for cluster_id in X.index:
     texts_of_this_cluster = texts_df[texts_df.cluster_id == cluster_id]
@@ -179,7 +183,15 @@ for cluster_id in X.index:
     os.makedirs(cluster_path)
     for text in texts_of_this_cluster.values:
         with open(os.path.join(cluster_path,text[0]),'w') as fi:
-            fi.write(text[1])
+            words = re.split("\s",text[1])
+            res = []
+            for w in words:
+                try:
+                    res += [re.sub('[^\w]', '_', w, flags=re.UNICODE)]
+                except Exception as e:
+                    print('\n\nWarning: error when processing word "{}". This word will be excluded.\nOriginal\
+                        exception : {}\n'.format(w, e.message))
+            fi.write(' '.join(words))
 
 print(result)
 
