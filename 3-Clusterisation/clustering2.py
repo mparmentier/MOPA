@@ -14,9 +14,24 @@ import os
 import datetime as dt
 import re
 
-CODE_DESCRIPTEURS = [88,12,230,18,48,118,323,304,328,274] # pour le choix de la categorie des documents ('ANNONCE.GESTION.INDEXATION.DESCRIPTEURS.DESCRIPTEUR.CODE')
+CODE_DESCRIPTEURS = [118,323,304,328,274] # pour le choix de la categorie des documents ('ANNONCE.GESTION.INDEXATION.DESCRIPTEURS.DESCRIPTEUR.CODE')
 NB_CLUSTERS = 5
 MONGO_LIMIT = 280000
+ADDITIONAL_STOP_WORDS = ['2017', '2016', '2015', '2014', '2013', '2012', '4em', '5em']
+
+##############################
+## Initialisation de l'analyse
+##############################
+
+id_analysis = re.sub("[ :]",'-',str(dt.datetime.now())[:19])
+
+print('\n\n\n\n')
+print("#"*60)
+print("#"*60)
+print("Here is the identifier of this analysis : \n id_analysis = '{}'".format(id_analysis))
+print("#"*60)
+print("#"*60)
+print('\n\n\n\n')
 
 ##############################
 ## Database
@@ -27,7 +42,7 @@ try:
     client = MongoClient('localhost', 27017)
     db = client.MOPA
     marches = db.Marches
-    db.Clusters.drop()
+    #db.Clusters.drop()
     print("Connexion réussie")
 except :
     sys.stderr.write("Erreur de connexion à MongoDB")
@@ -96,7 +111,7 @@ for i, code_descripteur in enumerate(CODE_DESCRIPTEURS):
     texts_df = pd.DataFrame(texts)
 
     stop_words = get_stop_words('fr')
-    stop_words.extend(['2017', '2016', '2015', '2014', '2013', '2012', '4em', '5em'])
+    stop_words.extend(ADDITIONAL_STOP_WORDS)
 
     # Un HashingVectorizer découpe un texte en une liste de mots, et renvoie une matrice où chaque ligne correspond à
     # un document et chaque colonne à un mot
@@ -179,34 +194,32 @@ for i, code_descripteur in enumerate(CODE_DESCRIPTEURS):
     ##############################
     ## Enregistrement des fichiers
     ##############################
-    # Rajout de Martin 03/12/2016 15:29 : Enregistrement des clusters dans une collection MongoDB
+
     clustersDB = db.Clusters
     clustersDB.insert_one({'code' : code_descripteur,
+                           'id_analysis' : id_analysis,
                            'libelle' : libel,
                            'nb': len(texts)})
 
-    now = re.sub("[ :]",'-',str(dt.datetime.now())[:19])
-    dir_name = os.path.join('data','{}-DESCRIPTEUR_{}'.format(now,code_descripteur))
+    dir_name = os.path.join('data',id_analysis,'DESCRIPTEUR_{}'.format(code_descripteur))
 
     os.makedirs(dir_name, exist_ok=True)
 
     result.to_csv(os.path.join(dir_name,'a_completer.csv'),index=False, sep=";")
 
-    # copie de texts_df avec selection de 2 colonnes seulement
-    corresp = pd.DataFrame(texts_df,columns=['cluster_id','id'])
-    corresp.to_csv(os.path.join(dir_name,'corresp.csv'),index=False, sep=";")
-
-    annonces = list()
+    annonces = {}
     for cluster_id in X.index:
-        idweb = dict()
+        idweb = []
         texts_of_this_cluster = texts_df[texts_df.cluster_id == cluster_id]
-        cluster_path = os.path.join( dir_name, cluster_id)
+        cluster_path = os.path.join(dir_name, cluster_id)
         os.makedirs(cluster_path)
 
         for j,text in enumerate(texts_of_this_cluster.values):
-            idweb[str(j)] = text[0]
-            with open(os.path.join(cluster_path,text[0]),'w') as fi:
-                words = re.split("\s",text[1])
+            text_id = text[0]
+            text_content = text[1]
+            idweb.append(text_id)
+            with open(os.path.join(cluster_path,text_id),'w') as fi:
+                words = re.split("\s",text_content)
                 res = []
                 for w in words:
                     try:
@@ -216,26 +229,31 @@ for i, code_descripteur in enumerate(CODE_DESCRIPTEURS):
                             exception : {}\n'.format(w, e.message))
                 fi.write(' '.join(words))
 
-        annonces.append(idweb)
+        annonces[cluster_id] = idweb
 
     print(result)
 
-
-
     #Mise à jour des documents de la collection clusters
-    #data_meta = pd.read_csv(os.path.join(dir_name,'a_completer.csv'), sep = ';')
-    #for row in data_meta.itertuples() :
-    #    #print(row)
-    #    indice = int(row[3][-1])
-    #
-    #    result = clustersDB.update_one(
-    #        {"code": code_descripteur},
-    #        {
-    #            "$set": { row[3]: {
-    #                        "key_words": row[1],
-    #                        "human_attributed_label": '',
-    #                        "idweb": annonces[indice]
-    #                        },
-    #                     }
-    #        }
-    #    )
+    for ind,row in result.iterrows() :
+        clustersDB.update_one(
+            {"code": code_descripteur,
+             'id_analysis': id_analysis},
+            {
+                "$set": { row['cluster_id']: {
+                            "key_words": row['key_words'],
+                            "human_attributed_label": None,
+                            "idweb": annonces[cluster_id]
+                            },
+                         }
+            }
+        )
+
+    clustersDB.update_one(
+        {"code": code_descripteur,
+        'id_analysis': id_analysis},
+        {
+            "$set": {
+                'cluster_ids': list(annonces.keys())
+            }
+        }
+    )
